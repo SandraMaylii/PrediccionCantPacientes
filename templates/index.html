@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Horizonte Medic</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 30px;
+        }
+
+        .card {
+            margin-top: 20px;
+        }
+
+        .badge {
+            font-size: 1rem;
+        }
+
+        #empresaFiltro {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <img src="{{ url_for('static', filename='horiz.png') }}" alt="Logo" class="d-block mx-auto mb-4"
+            style="width: 50%; height: auto;">
+
+        <div class="row">
+            <div class="col-md-6">
+                <label class="form-label">Buscar empresa:</label>
+                <input type="text" id="empresaFiltro" class="form-control" placeholder="Filtra empresas por nombre...">
+                <label class="form-label mt-2">Selecciona una empresa:</label>
+                <select id="empresaMultiple" class="form-select"></select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">Semana a predecir:</label>
+                <input type="date" id="fecha" class="form-control">
+                <button class="btn btn-primary mt-4 w-100" onclick="comparar()">Predecir</button>
+            </div>
+        </div>
+
+        <!-- Resultado de predicción -->
+        <div class="card p-3 d-none" id="cardPrediccion">
+            <h5 class="mb-3">Resultado de Predicción</h5>
+            <p><strong>Empresa:</strong> <span id="resEmpresa"></span></p>
+            <p><strong>Fecha:</strong> <span id="resFecha"></span></p>
+            <p><strong>Exámenes estimados:</strong> <span id="resExamenes" class="badge bg-info text-dark"></span></p>
+            <p><strong>Nivel de demanda:</strong> <span id="resNivel" class="badge bg-secondary"></span></p>
+            <p>
+                <strong>Med. recomendados:</strong> <span id="resMedicos"></span> |
+                <strong>Enfermeros:</strong> <span id="resEnfermeros"></span> |
+                <strong>Apoyo:</strong> <span id="resApoyo"></span>
+            </p>
+        </div>
+
+        <!-- Selector de gráfico -->
+        <div class="mt-4">
+            <label class="form-label">Comparación Histórica</label>
+            <select id="tipoGrafico" class="form-select w-50">
+                <option value="mes">Gráfico por Mes</option>
+                <option value="semana">Gráfico por Semana</option>
+            </select>
+        </div>
+
+        <!-- Gráfico por mes -->
+        <div class="card p-3 d-none" id="cardGraficoMes">
+            <h5 class="mb-3">Exámenes por Mes</h5>
+            <canvas id="graficoMes" height="100"></canvas>
+        </div>
+
+        <!-- Gráfico por semana -->
+        <div class="card p-3 d-none" id="cardGraficoSemana">
+            <h5 class="mb-3">Exámenes por Semana</h5>
+            <canvas id="graficoSemana" height="100"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let empresasData = [];
+
+        window.addEventListener('DOMContentLoaded', () => {
+            // Limitar fecha mínima al día actual
+            const hoy = new Date().toISOString().split('T')[0];
+            document.getElementById('fecha').setAttribute('min', hoy);
+        });
+
+        fetch('/empresas')
+            .then(res => res.json())
+            .then(data => {
+                empresasData = data;
+                actualizarOpciones(data);
+            });
+
+        document.getElementById('empresaFiltro').addEventListener('input', () => {
+            const filtro = document.getElementById('empresaFiltro').value.toLowerCase();
+            const filtradas = empresasData.filter(e => e.razon_empresa.toLowerCase().includes(filtro));
+            actualizarOpciones(filtradas);
+        });
+
+        function actualizarOpciones(empresas) {
+            const select = document.getElementById('empresaMultiple');
+            select.innerHTML = '';
+            empresas.forEach(emp => {
+                const opt = document.createElement('option');
+                opt.value = emp.razon_empresa;
+                opt.textContent = emp.razon_empresa;
+                select.appendChild(opt);
+            });
+        }
+
+        function comparar() {
+            const fechaInput = document.getElementById('fecha');
+            const fecha = fechaInput.value;
+            const empresa = document.getElementById('empresaMultiple').value;
+            const hoy = new Date().toISOString().split('T')[0];
+
+            if (!fecha || !empresa) {
+                alert("Selecciona una empresa y una fecha.");
+                return;
+            }
+
+            if (fecha < hoy) {
+                alert("No puedes seleccionar una fecha anterior a hoy.");
+                fechaInput.focus();
+                return;
+            }
+
+            // Predicción
+            fetch('/predecir', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ empresa, fecha })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('resEmpresa').textContent = data.empresa;
+                    document.getElementById('resFecha').textContent = data.fecha;
+                    document.getElementById('resExamenes').textContent = data.examenes_estimados;
+                    document.getElementById('resNivel').textContent = data.nivel;
+                    document.getElementById('resMedicos').textContent = data.medicos;
+                    document.getElementById('resEnfermeros').textContent = data.enfermeros;
+                    document.getElementById('resApoyo').textContent = data.apoyo;
+                    document.getElementById('cardPrediccion').classList.remove('d-none');
+                });
+
+            // Gráficos
+            fetch('/graficos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ empresa })
+            })
+                .then(res => res.json())
+                .then(data => renderGraficos(data));
+        }
+
+        function renderGraficos(data) {
+            const tipoGrafico = document.getElementById('tipoGrafico').value;
+
+            // Gráfico mensual
+            const etiquetasMes = data.mensual.map(d => d.mes);
+            const valoresMes = data.mensual.map(d => d.examenes);
+
+            const ctxMes = document.getElementById('graficoMes').getContext('2d');
+            if (window.chartMes) window.chartMes.destroy();
+            window.chartMes = new Chart(ctxMes, {
+                type: 'bar',
+                data: {
+                    labels: etiquetasMes,
+                    datasets: [{
+                        label: 'Exámenes por Mes',
+                        data: valoresMes,
+                        backgroundColor: '#0d6efd'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { title: { display: true, text: 'Mes' } }
+                    }
+                }
+            });
+
+            // Gráfico semanal
+            const etiquetasSem = data.semanal.map(d => d.etiqueta);
+            const valoresSem = data.semanal.map(d => d.examenes);
+
+            const ctxSem = document.getElementById('graficoSemana').getContext('2d');
+            if (window.chartSem) window.chartSem.destroy();
+            window.chartSem = new Chart(ctxSem, {
+                type: 'line',
+                data: {
+                    labels: etiquetasSem,
+                    datasets: [{
+                        label: 'Exámenes por Semana',
+                        data: valoresSem,
+                        borderColor: '#73de6f',
+                        backgroundColor: '#73de6f',
+                        tension: 0.3,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: true },
+                        x: { title: { display: true, text: 'Semana' } }
+                    }
+                }
+            });
+
+            document.getElementById('cardGraficoMes').classList.toggle('d-none', tipoGrafico !== 'mes');
+            document.getElementById('cardGraficoSemana').classList.toggle('d-none', tipoGrafico !== 'semana');
+
+            document.getElementById('tipoGrafico').addEventListener('change', e => {
+                const tipo = e.target.value;
+                document.getElementById('cardGraficoMes').classList.toggle('d-none', tipo !== 'mes');
+                document.getElementById('cardGraficoSemana').classList.toggle('d-none', tipo !== 'semana');
+            });
+        }
+    </script>
+</body>
+
+</html>
